@@ -1,0 +1,61 @@
+[gd_scene format=3 uid="uid://cuprvhx4oaulw"]
+
+[ext_resource type="PackedScene" uid="uid://dv110cjtdogkk" path="res://scenes/player.tscn" id="1_uwrxv"]
+[ext_resource type="Script" uid="uid://d1qgohvbngdky" path="res://scripts/pause_overlay.gd" id="2_yqjtg"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_yqjtg"]
+size = Vector2(1200, 20)
+
+[node name="Game" type="Node2D" unique_id=1348832329]
+
+[node name="Floor" type="StaticBody2D" parent="." unique_id=1627246057]
+position = Vector2(576, 400)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Floor" unique_id=422663708]
+shape = SubResource("RectangleShape2D_yqjtg")
+
+[node name="Player" parent="Floor" unique_id=1776747874 instance=ExtResource("1_uwrxv")]
+position = Vector2(576, 0)
+
+[node name="ColorRect" type="ColorRect" parent="Floor" unique_id=1954370818]
+offset_left = -600.0
+offset_top = -2.0
+offset_right = 600.0
+offset_bottom = 2.0
+color = Color(0, 0, 0, 1)
+
+[node name="PauseLayer" type="CanvasLayer" parent="." unique_id=1287521335]
+
+[node name="PauseOverlay" type="ColorRect" parent="PauseLayer" unique_id=475683343]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.5019608)
+script = ExtResource("2_yqjtg")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="PauseLayer/PauseOverlay" unique_id=83305954]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SettingsButton" type="Button" parent="PauseLayer/PauseOverlay/VBoxContainer" unique_id=460377466]
+layout_mode = 2
+text = "Settings"
+
+[node name="QuitButton" type="Button" parent="PauseLayer/PauseOverlay/VBoxContainer" unique_id=1522364180]
+layout_mode = 2
+text = "Quit"
+
+[connection signal="pressed" from="PauseLayer/PauseOverlay/VBoxContainer/QuitButton" to="PauseLayer/PauseOverlay" method="_on_quit_button_pressed"]

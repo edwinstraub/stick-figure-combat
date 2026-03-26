@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://dv110cjtdogkk"]
+
+[ext_resource type="Script" uid="uid://8uxoywugfidn" path="res://scripts/stick_figure.gd" id="1_3vyb7"]
+[ext_resource type="Script" uid="uid://dwj6yueso2iwk" path="res://scripts/player.gd" id="1_g2els"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_u8vuu"]
+height = 60.0
+
+[node name="Player" type="CharacterBody2D" unique_id=1776747874]
+script = ExtResource("1_g2els")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=2121631751]
+position = Vector2(0, -25)
+shape = SubResource("CapsuleShape2D_u8vuu")
+
+[node name="StickFigure" type="Node2D" parent="." unique_id=254662588]
+script = ExtResource("1_3vyb7")
