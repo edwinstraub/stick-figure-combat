@@ -74,44 +74,123 @@ function drawButton(text, x, y, w, h) {
   return clicked;
 }
 
-// ── Stick figure drawing ──────────────────────────────────────
-function seg(x1, y1, x2, y2) {
-  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+// ── Sprite Animation System ──────────────────────────────────
+
+// Sprite sheet definitions
+// Each animation is a single-row PNG in sprites/ folder.
+// frameW/frameH = size of one frame. frames = total frame count.
+const SPRITE_DEFS = {
+  idle:         { src: 'sprites/idle.png',         frames: 1,  frameW: 64, frameH: 128, fps: 1  },
+  walk:         { src: 'sprites/walk.png',         frames: 8,  frameW: 64, frameH: 128, fps: 12 },
+  light_attack: { src: 'sprites/light_attack.png', frames: 6,  frameW: 64, frameH: 128, fps: 14 },
+  heavy_attack: { src: 'sprites/heavy_attack.png', frames: 8,  frameW: 64, frameH: 128, fps: 10 },
+  block:        { src: 'sprites/block.png',        frames: 1,  frameW: 64, frameH: 128, fps: 1  },
+};
+
+// Load sprite images (non-blocking; missing files gracefully fall back)
+const spriteImages = {};
+for (const [name, def] of Object.entries(SPRITE_DEFS)) {
+  const img = new Image();
+  img.src = def.src;
+  img._loaded = false;
+  img._failed = false;
+  img.onload = () => { img._loaded = true; };
+  img.onerror = () => { img._failed = true; };
+  spriteImages[name] = img;
 }
 
-function drawStickFigure(x, footY) {
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+// Placeholder colors per animation (for when sprites aren't loaded yet)
+const PLACEHOLDER_COLORS = {
+  idle:         '#4488cc',
+  walk:         '#44aa44',
+  light_attack: '#cc8844',
+  heavy_attack: '#cc4444',
+  block:        '#8844cc',
+};
 
-  const hipY  = footY - 56;
-  const neckY = hipY - 32;
-  const headY = neckY - 22;
+// Animator: manages current animation, frame, and timing
+function createAnimator() {
+  return {
+    current: 'idle',
+    frame: 0,
+    elapsed: 0,
 
-  // head
-  ctx.beginPath();
-  ctx.arc(x, headY, 11, 0, Math.PI * 2);
-  ctx.stroke();
+    play(name) {
+      if (name === this.current) return;
+      this.current = name;
+      this.frame = 0;
+      this.elapsed = 0;
+    },
 
-  // torso
-  seg(x, neckY, x, hipY);
+    update(dt) {
+      const def = SPRITE_DEFS[this.current];
+      if (!def || def.frames <= 1) return;
 
-  // arms
-  seg(x, neckY, x - 18, hipY - 8);
-  seg(x, neckY, x + 18, hipY - 8);
+      this.elapsed += dt;
+      const frameDur = 1 / def.fps;
+      if (this.elapsed >= frameDur) {
+        this.elapsed -= frameDur;
+        this.frame = (this.frame + 1) % def.frames;
+      }
+    },
 
-  // legs
-  seg(x, hipY, x - 14, footY);
-  seg(x, hipY, x + 14, footY);
+    // Draw at (x, y) where y = bottom-center of sprite
+    draw(ctx, x, y) {
+      const name = this.current;
+      const def  = SPRITE_DEFS[name];
+      if (!def) return;
+
+      const img = spriteImages[name];
+      const fw  = def.frameW;
+      const fh  = def.frameH;
+
+      // Top-left corner (anchor = bottom-center)
+      const dx = Math.round(x - fw / 2);
+      const dy = Math.round(y - fh);
+
+      if (img && img._loaded) {
+        // Draw from sprite sheet: single row, frame index = column
+        const sx = this.frame * fw;
+        ctx.drawImage(img, sx, 0, fw, fh, dx, dy, fw, fh);
+      } else {
+        // Placeholder: colored rectangle with label
+        const color = PLACEHOLDER_COLORS[name] || '#888';
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.35;
+        ctx.fillRect(dx, dy, fw, fh);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(dx, dy, fw, fh);
+
+        // Label
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 11px Courier New';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, x, y - fh / 2 - 8);
+
+        // Frame counter
+        ctx.font = '10px Courier New';
+        ctx.fillText('frame ' + this.frame + '/' + def.frames, x, y - fh / 2 + 8);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+    }
+  };
 }
 
 // ── Game state ────────────────────────────────────────────────
 let state = 'MENU'; // MENU, PLAY, PAUSE
 let playerX = W / 2;
+let lastTime = 0;
+const playerAnim = createAnimator();
 
 // ── Main loop ─────────────────────────────────────────────────
-function loop() {
+function loop(timestamp) {
+  const dt = lastTime ? (timestamp - lastTime) / 1000 : 0;
+  lastTime = timestamp;
+
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, W, H);
@@ -130,6 +209,7 @@ function loop() {
     if (drawButton('Start', bx, by, bw, bh)) {
       state = 'PLAY';
       playerX = W / 2;
+      playerAnim.play('idle');
     }
   }
 
@@ -137,17 +217,21 @@ function loop() {
     // Ground
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
-    seg(0, GROUND, W, GROUND);
+    ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
 
-    // Player
-    drawStickFigure(playerX, GROUND);
-
-    // Movement
+    // Movement & animation state
     if (state === 'PLAY') {
+      const moving = held('moveLeft') || held('moveRight');
       if (held('moveLeft'))  playerX -= 3;
-      if (held('moveRight')) playerX += 1;
+      if (held('moveRight')) playerX += 3;
       playerX = Math.max(20, Math.min(W - 20, playerX));
+
+      playerAnim.play(moving ? 'walk' : 'idle');
+      playerAnim.update(dt);
     }
+
+    // Draw player
+    playerAnim.draw(ctx, playerX, GROUND);
 
     // Escape toggles pause
     if (KJ['Escape']) {
