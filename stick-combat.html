@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stick Combat</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    user-select: none;
+  }
+  canvas { display: block; border: 1px solid #1a1a3a; }
+  #ctrl {
+    color: #445;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ctrl">A / D — MOVE &nbsp;·&nbsp; Z — LIGHT ATTACK &nbsp;·&nbsp; X — HEAVY ATTACK &nbsp;·&nbsp; C — BLOCK (hold)</div>
+
+<script>
+// ============================================================
+//  STICK COMBAT  —  Prototype v1
+// ============================================================
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const W = 900, H = 480;
+canvas.width = W; canvas.height = H;
+
+const GROUND   = 370;
+const HIP_OFFS = 56;   // hip center is 56px above foot baseline in idle pose
+
+// ── Maths ─────────────────────────────────────────────────────
+const lerp       = (a, b, t) => a + (b - a) * t;
+const clamp      = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const smoothstep = t => { t = clamp(t,0,1); return t*t*(3-2*t); };
+const rand       = (a, b) => a + Math.random() * (b - a);
+const randInt    = (a, b) => Math.floor(rand(a, b + 1));
+
+// Lerp every joint in a pose
+function lerpPose(a, b, t) {
+  const p = {};
+  for (const k in a) p[k] = [ lerp(a[k][0], b[k][0], t), lerp(a[k][1], b[k][1], t) ];
+  return p;
+}
+
+// Deep-clone a pose so we can mutate currentPose safely
+function clonePose(p) {
+  const c = {};
+  for (const k in p) c[k] = [p[k][0], p[k][1]];
+  return c;
+}
+
+// ── Input ─────────────────────────────────────────────────────
+const K  = {};   // held keys
+const KJ = {};   // just-pressed this frame
+window.addEventListener('keydown', e => {
+  if (!K[e.code]) KJ[e.code] = true;
+  K[e.code] = true;
+  const eat = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space',
+               'KeyZ','KeyX','KeyC','KeyA','KeyD','Enter'];
+  if (eat.includes(e.code)) e.preventDefault();
+});
+window.addEventListener('keyup', e => delete K[e.code]);
+
+// ── Poses ─────────────────────────────────────────────────────
+// All coords relative to hip-center: x → facing direction, y → down
+// Joints: neck, head, lSh, lEl, lWr, rSh, rEl, rWr, lHip, lKn, lFt, rHip, rKn, rFt
+
+const P = {
+  idle: {
+    neck:[0,-32],head:[1,-47],
+    lSh:[-13,-29],lEl:[-19,-8],lWr:[-15,10],
+    rSh:[13,-29], rEl:[19,-8], rWr:[15,10],
+    lHip:[-8,0],lKn:[-9,28],lFt:[-8,56],
+    rHip:[8,0], rKn:[9,28],  rFt:[8,56],
+  },
+  walk_a: {
+    neck:[2,-31],head:[3,-46],
+    lSh:[-12,-28],lEl:[-5,-11],lWr:[-3,8],
+    rSh:[13,-28], rEl:[22,-14],rWr:[20,5],
+    lHip:[-8,0],lKn:[-2,24],lFt:[6,50],
+    rHip:[8,0], rKn:[13,31], rFt:[11,57],
+  },
+  walk_b: {
+    neck:[-2,-31],head:[-3,-46],
+    lSh:[-13,-28],lEl:[-22,-14],lWr:[-20,5],
+    rSh:[12,-28], rEl:[5,-11],  rWr:[3,8],
+    lHip:[-8,0],lKn:[-13,31],lFt:[-11,57],
+    rHip:[8,0], rKn:[2,24],   rFt:[-6,50],
+  },
+  atk_wind: {
+    neck:[-4,-32],head:[-5,-47],
+    lSh:[-12,-28],lEl:[-18,-8],lWr:[-14,10],
+    rSh:[13,-28], rEl:[7,-40], rWr:[3,-24],   // right arm cocked back & up
+    lHip:[-8,1],lKn:[-8,29],lFt:[-8,56],
+    rHip:[8,1], rKn:[8,29],  rFt:[8,56],
+  },
+  atk_strike: {
+    neck:[5,-30],head:[7,-44],
+    lSh:[-9,-26],lEl:[-7,-8],lWr:[-5,12],
+    rSh:[14,-27],rEl:[34,-19],rWr:[48,-11],   // fully extended jab
+    lHip:[-8,0],lKn:[-8,28],lFt:[-8,56],
+    rHip:[8,0], rKn:[8,28],  rFt:[8,56],
+  },
+  atk_h_wind: {
+    neck:[-8,-30],head:[-10,-44],
+    lSh:[-12,-27],lEl:[-14,-45],lWr:[-8,-59], // both arms overhead
+    rSh:[13,-27], rEl:[16,-45], rWr:[10,-59],
+    lHip:[-8,2],lKn:[-6,31],lFt:[-8,57],
+    rHip:[8,2], rKn:[10,31],rFt:[8,57],
+  },
+  atk_h_strike: {
+    neck:[7,-28],head:[9,-42],
+    lSh:[-8,-25],lEl:[-2,-10],lWr:[7,9],
+    rSh:[14,-25],rEl:[30,-12],rWr:[44,2],     // overhead slam
+    lHip:[-8,0],lKn:[-8,28],lFt:[-8,56],
+    rHip:[8,0], rKn:[8,28],  rFt:[8,56],
+  },
+  block: {
+    neck:[0,-30],head:[1,-44],
+    lSh:[-11,-26],lEl:[-3,-38],lWr:[5,-28],  // crossed guard
+    rSh:[11,-26], rEl:[3,-38], rWr:[-3,-28],
+    lHip:[-8,2],lKn:[-5,31],lFt:[-8,56],
+    rHip:[8,2], rKn:[11,31],rFt:[8,56],
+  },
+  hit: {
+    neck:[-6,-28],head:[-10,-42],
+    lSh:[-16,-23],lEl:[-28,-9],lWr:[-36,7],
+    rSh:[10,-25], rEl:[20,-16],rWr:[29,-5],
+    lHip:[-9,2],lKn:[-13,31],lFt:[-14,57],
+    rHip:[9,2],  rKn:[6,31],  rFt:[9,56],
+  },
+  stagger: {
+    neck:[-12,-25],head:[-16,-39],
+    lSh:[-20,-22],lEl:[-34,-5],lWr:[-44,11],
+    rSh:[6,-23],  rEl:[20,-11],rWr:[30,3],
+    lHip:[-9,4],lKn:[-17,33],lFt:[-19,58],
+    rHip:[9,4],  rKn:[3,33],  rFt:[8,57],
+  },
+  death: {
+    neck:[-18,-12],head:[-24,-3],
+    lSh:[-24,-12],lEl:[-38,-1],lWr:[-48,15],
+    rSh:[0,-12],  rEl:[8,5],   rWr:[12,21],
+    lHip:[-8,10],lKn:[-22,28],lFt:[-30,50],
+    rHip:[8,10], rKn:[18,26], rFt:[22,46],
+  },
+};
+
+// ── Drawing ────────────────────────────────────────────────────
+function seg(x1,y1,x2,y2) {
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+}
+
+function drawFigure(sx, sy, pose, facing, color, lw) {
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.scale(facing, 1);
+  ctx.strokeStyle = color || '#d8d8f0';
+  ctx.lineWidth   = lw || 2.6;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  const j = pose;
+
+  // torso
+  seg(0,0, j.neck[0],j.neck[1]);
+  // head
+  ctx.beginPath();
+  ctx.arc(j.head[0], j.head[1]-11, 11, 0, Math.PI*2);
+  ctx.stroke();
+  // clavicles
+  seg(j.neck[0],j.neck[1], j.lSh[0],j.lSh[1]);
+  seg(j.neck[0],j.neck[1], j.rSh[0],j.rSh[1]);
+  // left arm
+  seg(j.lSh[0],j.lSh[1], j.lEl[0],j.lEl[1]);
+  seg(j.lEl[0],j.lEl[1], j.lWr[0],j.lWr[1]);
+  // right arm
+  seg(j.rSh[0],j.rSh[1], j.rEl[0],j.rEl[1]);
+  seg(j.rEl[0],j.rEl[1], j.rWr[0],j.rWr[1]);
+  // pelvis
+  seg(0,0, j.lHip[0],j.lHip[1]);
+  seg(0,0, j.rHip[0],j.rHip[1]);
+  // left leg
+  seg(j.lHip[0],j.lHip[1], j.lKn[0],j.lKn[1]);
+  seg(j.lKn[0],j.lKn[1],   j.lFt[0],j.lFt[1]);
+  // right leg
+  seg(j.rHip[0],j.rHip[1], j.rKn[0],j.rKn[1]);
+  seg(j.rKn[0],j.rKn[1],   j.rFt[0],j.rFt[1]);
+
+  ctx.restore();
+}
+
+// ── Camera ─────────────────────────────────────────────────────
+const cam = { x: 0, tx: 0, shake: 0 };
+
+function applyCamShake(amt) { cam.shake = Math.max(cam.shake, amt); }
+
+// World → screen X
+function ws(wx) { return wx - cam.x + Math.sin(cam.shake * 7.3) * cam.shake; }
+
+// ── Particles ──────────────────────────────────────────────────
+const parts = [];
+
+function spawnHit(wx, wy, heavy) {
+  const n = heavy ? 14 : 8;
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(1, heavy ? 6 : 4);
+    parts.push({ x: wx, y: wy,
+      vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 2.5,
+      life: 1, decay: rand(0.035, 0.07),
+      r: rand(2, heavy ? 5 : 3) });
+  }
+}
+
+function spawnBlock(wx, wy) {
+  for (let i = 0; i < 6; i++) {
+    const a = rand(-Math.PI*0.8, -Math.PI*0.2);
+    parts.push({ x: wx, y: wy,
+      vx: Math.cos(a)*rand(2,5), vy: Math.sin(a)*rand(2,5),
+      life: 1, decay: rand(0.05, 0.09), r: 2, col: '#aaddff' });
+  }
+}
+
+function updateParts() {
+  for (let i = parts.length-1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.18;
+    p.life -= p.decay;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+
+function drawParts() {
+  parts.forEach(p => {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle   = p.col || '#ff7744';
+    ctx.fillRect(ws(p.x)-p.r/2, p.y-p.r/2, p.r, p.r);
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ── Attack trail ───────────────────────────────────────────────
+const trail = [];  // {wx, wy, age}
+
+function addTrail(wx, wy) { trail.push({ x: wx, y: wy, age: 0 }); }
+
+function updateTrail() {
+  for (let i = trail.length-1; i >= 0; i--) {
+    trail[i].age++;
+    if (trail[i].age > 8) trail.splice(i, 1);
+  }
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const a = 1 - trail[i].age / 8;
+    ctx.globalAlpha = a * 0.5;
+    ctx.strokeStyle = '#ff9944';
+    ctx.lineWidth = (1 - trail[i].age/8) * 5;
+    ctx.lineCap = 'round';
+    seg(ws(trail[i-1].x), trail[i-1].y, ws(trail[i].x), trail[i].y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Entity base ────────────────────────────────────────────────
+class Entity {
+  constructor(x, color) {
+    this.x      = x;
+    this.hipY   = GROUND - HIP_OFFS;
+    this.facing = 1;
+    this.color  = color;
+    this.hp     = 100;
+    this.maxHp  = 100;
+    this.state  = 'IDLE';
+    this.timer  = 0;   // frames left in current timed state
+    this.hitCD  = 0;   // invincibility frames after being hit
+
+    // Animation: every frame currentPose lerps toward targetPose
+    this.currentPose = clonePose(P.idle);
+    this.targetPose  = P.idle;
+    this.poseSpd     = 0.14;  // lerp rate (higher = snappier transition)
+  }
+
+  setPose(pose, speed) {
+    this.targetPose = pose;
+    this.poseSpd    = speed ?? 0.14;
+  }
+
+  tickPose() {
+    const spd = this.poseSpd;
+    for (const k in this.targetPose) {
+      if (!this.currentPose[k]) {
+        this.currentPose[k] = [...this.targetPose[k]];
+      } else {
+        this.currentPose[k][0] = lerp(this.currentPose[k][0], this.targetPose[k][0], spd);
+        this.currentPose[k][1] = lerp(this.currentPose[k][1], this.targetPose[k][1], spd);
+      }
+    }
+  }
+
+  tick() {
+    if (this.timer > 0) this.timer--;
+    if (this.hitCD  > 0) this.hitCD--;
+    this.tickPose();
+  }
+
+  screenX() { return ws(this.x); }
+  screenY() { return this.hipY;  }
+
+  // World position of right wrist (primary strike hand)
+  wristWorld() {
+    const j = this.currentPose;
+    return { x: this.x + this.facing * j.rWr[0], y: this.hipY + j.rWr[1] };
+  }
+
+  draw() {
+    drawFigure(this.screenX(), this.screenY(), this.currentPose, this.facing, this.color);
+    this.drawHpBar();
+  }
+
+  drawHpBar() {
+    const bw = 48, bh = 4;
+    const bx = this.screenX() - bw/2;
+    const by = this.screenY() - 86;
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(bx, by, bw, bh);
+    const pct = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = pct > 0.5 ? '#44cc55' : pct > 0.25 ? '#ffaa22' : '#ff3333';
+    ctx.fillRect(bx, by, bw * pct, bh);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(bx, by, bw, bh);
+  }
+}
+
+// ── Player ─────────────────────────────────────────────────────
+class Player extends Entity {
+  constructor() {
+    super(200, '#c8d8ff');
+    this.score     = 0;
+    this.comboN    = 0;
+    this.comboT    = 0;
+    this.walkCycle = 0;
+    this.didHit    = false;   // has this attack already landed
+    this.surviveT  = 0;       // total frames survived
+    this.blocking  = false;
+    this.prevWrist = null;
+  }
+
+  update(enemies) {
+    this.tick();
+    this.surviveT++;
+    if (this.comboT > 0) this.comboT--;
+    else this.comboN = 0;
+
+    if (this.state === 'DEATH') {
+      // Slowly collapse
+      this.setPose(P.death, 0.05);
+      return;
+    }
+
+    const locked  = ['ATK_L_WIND','ATK_L_STRIKE','ATK_H_WIND','ATK_H_STRIKE'].includes(this.state)
+                    && this.timer > 6;
+    const stunned = ['HIT','STAGGER'].includes(this.state) && this.timer > 0;
+
+    this.blocking = K['KeyC'] && !locked && !stunned;
+
+    // ── Movement ────────────────────────────────────────────
+    let moving = false;
+    if (!stunned && !locked) {
+      if (K['KeyA'] || K['ArrowLeft'])  { this.x -= 3.2; this.facing = -1; moving = true; }
+      if (K['KeyD'] || K['ArrowRight']) { this.x += 3.2; this.facing =  1; moving = true; }
+    }
+
+    // Clamp camera left bound
+    this.x = Math.max(this.x, cam.x + 60);
+
+    // ── Attack inputs ─────────────────────────────────────
+    if (!locked && !stunned && !this.blocking) {
+      if (KJ['KeyZ'] && !['ATK_L_WIND','ATK_L_STRIKE','ATK_H_WIND','ATK_H_STRIKE'].includes(this.state)) {
+        this.state  = 'ATK_L_WIND';
+        this.timer  = 11;
+        this.didHit = false;
+        this.setPose(P.atk_wind, 0.22);
+        return;
+      }
+      if (KJ['KeyX'] && !['ATK_L_WIND','ATK_L_STRIKE','ATK_H_WIND','ATK_H_STRIKE'].includes(this.state)) {
+        this.state  = 'ATK_H_WIND';
+        this.timer  = 22;
+        this.didHit = false;
+        this.setPose(P.atk_h_wind, 0.13);
+        return;
+      }
+    }
+
+    // ── State machine ─────────────────────────────────────
+    switch (this.state) {
+
+      case 'IDLE':
+        if (moving) {
+          this.state = 'WALK';
+        } else {
+          this.setPose(this.blocking ? P.block : P.idle,
+                       this.blocking ? 0.22 : 0.06);
+        }
+        break;
+
+      case 'WALK':
+        if (!moving) { this.state = 'IDLE'; break; }
+        this.walkCycle += 0.085;
+        const wt = (Math.sin(this.walkCycle) + 1) * 0.5;
+        this.setPose(lerpPose(P.walk_a, P.walk_b, wt), 0.28);
+        break;
+
+      case 'ATK_L_WIND':
+        if (this.timer <= 0) {
+          this.state = 'ATK_L_STRIKE';
+          this.timer = 16;
+          this.setPose(P.atk_strike, 0.38);
+        }
+        break;
+
+      case 'ATK_L_STRIKE':
+        { const w = this.wristWorld();
+          if (!this.didHit) addTrail(w.x, w.y);
+          if (!this.didHit && this.timer > 7) this.checkHits(enemies, 22, 82, 55, false);
+          if (this.timer <= 0) { this.state = 'ATK_L_REC'; this.timer = 14; this.setPose(P.idle, 0.10); }
+        }
+        break;
+
+      case 'ATK_L_REC':
+        if (this.timer <= 0) this.state = 'IDLE';
+        break;
+
+      case 'ATK_H_WIND':
+        if (this.timer <= 0) {
+          this.state = 'ATK_H_STRIKE';
+          this.timer = 22;
+          this.setPose(P.atk_h_strike, 0.28);
+        }
+        break;
+
+      case 'ATK_H_STRIKE':
+        { const w = this.wristWorld();
+          if (!this.didHit) addTrail(w.x, w.y);
+          if (!this.didHit && this.timer > 10) this.checkHits(enemies, 42, 105, 75, true);
+          if (this.timer <= 0) { this.state = 'ATK_H_REC'; this.timer = 24; this.setPose(P.idle, 0.07); }
+        }
+        break;
+
+      case 'ATK_H_REC':
+        if (this.timer <= 0) this.state = 'IDLE';
+        break;
+
+      case 'HIT':
+        if (this.timer <= 0) { this.state = 'IDLE'; this.setPose(P.idle, 0.10); }
+        break;
+
+      case 'STAGGER':
+        if (this.timer <= 0) { this.state = 'IDLE'; this.setPose(P.idle, 0.07); }
+        break;
+    }
+
+    if (this.hp <= 0 && this.state !== 'DEATH') {
+      this.state = 'DEATH';
+      this.setPose(P.death, 0.07);
+    }
+
+    // Smooth camera follow — player stays ~35% from left edge
+    cam.tx = this.x - W * 0.35;
+    cam.x  = lerp(cam.x, cam.tx, 0.065);
+    cam.shake = Math.max(0, cam.shake - 0.6);
+  }
+
+  checkHits(enemies, dmg, range, arc, heavy) {
+    for (const e of enemies) {
+      if (e.state === 'DEATH') continue;
+      const dx = (e.x - this.x) * this.facing;
+      const dy = Math.abs(e.hipY - this.hipY);
+      if (dx > 4 && dx < range && dy < arc) {
+        if (e.onHit(dmg, heavy, this.facing)) {
+          this.didHit = true;
+          this.score += dmg;
+          this.comboN++;
+          this.comboT = 100;
+          if (e.hp <= 0) this.score += 150;
+          if (heavy) applyCamShake(6);
+          break;
+        }
+      }
+    }
+  }
+
+  onHit(dmg, heavy, fromDir) {
+    if (this.hitCD > 0)      return false;
+    if (this.state === 'DEATH') return false;
+
+    if (this.blocking) {
+      // Block absorbs most damage
+      this.hp -= Math.max(1, Math.floor(dmg * 0.1));
+      this.hitCD = 12;
+      spawnBlock(this.x + this.facing * 20, this.hipY - 20);
+      this.setPose(P.block, 0.4);
+      return true;
+    }
+
+    this.hp    -= dmg;
+    this.hitCD  = 22;
+    spawnHit(this.x, this.hipY - 20, heavy);
+    if (heavy) applyCamShake(9);
+
+    if (heavy || this.hp < 25) {
+      this.state = 'STAGGER'; this.timer = 36;
+      this.setPose(P.stagger, 0.28);
+    } else {
+      this.state = 'HIT'; this.timer = 20;
+      this.setPose(P.hit, 0.35);
+    }
+    return true;
+  }
+}
+
+// ── Enemy ──────────────────────────────────────────────────────
+let _eid = 0;
+
+class Enemy extends Entity {
+  constructor(x, tier) {
+    super(x, '#ff7755');
+    this.eid      = _eid++;
+    this.tier     = tier;
+    this.maxHp    = 55 + tier * 22;
+    this.hp       = this.maxHp;
+    this.atkDmg   = 10 + tier * 4;
+    this.speed    = 1.1 + tier * 0.13;
+    this.reactT   = Math.max(18, 58 - tier * 3);
+    this.engRange = 85 + rand(-10, 10);
+    this.atkRange = 72;
+    this.think    = randInt(20, 50);    // countdown to next decision
+    this.atkType  = 'LIGHT';
+    this.didHit   = false;
+    this.walkCycle= rand(0, Math.PI*2);
+    this.deathAt  = 0;
+  }
+
+  update(player) {
+    this.tick();
+    if (this.state === 'DEATH') return;
+
+    const dx   = player.x - this.x;
+    this.facing = dx >= 0 ? 1 : -1;
+    const dist = Math.abs(dx);
+
+    if (this.think > 0) this.think--;
+
+    switch (this.state) {
+
+      case 'IDLE':
+        this.setPose(P.idle, 0.06);
+        if (dist > this.engRange * 1.6) { this.state = 'APPROACH'; break; }
+        if (this.think <= 0) {
+          if (dist < this.atkRange && player.state !== 'DEATH') {
+            // Harder tiers may use heavy to break guard
+            if (player.blocking && this.tier >= 3 && Math.random() < 0.5) {
+              this.startAtk('HEAVY');
+            } else {
+              this.startAtk(Math.random() < 0.65 ? 'LIGHT' : 'HEAVY');
+            }
+          } else {
+            this.state = 'APPROACH';
+          }
+          this.think = this.reactT + randInt(0, 20);
+        }
+        break;
+
+      case 'APPROACH':
+        this.x += this.facing * this.speed;
+        this.walkCycle += 0.075;
+        { const t = (Math.sin(this.walkCycle) + 1) * 0.5;
+          this.setPose(lerpPose(P.walk_a, P.walk_b, t), 0.24); }
+        if (dist <= this.engRange) {
+          this.state = 'IDLE';
+          this.think = this.reactT;
+        }
+        break;
+
+      case 'ATK_WIND':
+        if (this.timer <= 0) {
+          this.state  = 'ATK_STRIKE';
+          this.timer  = this.atkType === 'LIGHT' ? 16 : 22;
+          this.didHit = false;
+          this.setPose(this.atkType === 'LIGHT' ? P.atk_strike : P.atk_h_strike, 0.32);
+        }
+        break;
+
+      case 'ATK_STRIKE':
+        if (!this.didHit && this.timer > 5) {
+          const dx2 = (player.x - this.x) * this.facing;
+          const dy2 = Math.abs(player.hipY - this.hipY);
+          if (dx2 > 0 && dx2 < this.atkRange && dy2 < 55) {
+            const heavy = this.atkType === 'HEAVY';
+            if (player.onHit(this.atkDmg * (heavy ? 1.8 : 1), heavy, this.facing)) {
+              this.didHit = true;
+            }
+          }
+        }
+        if (this.timer <= 0) {
+          this.state = 'ATK_REC';
+          this.timer = 18 + (this.atkType === 'HEAVY' ? 10 : 0);
+          this.setPose(P.idle, 0.10);
+        }
+        break;
+
+      case 'ATK_REC':
+        if (this.timer <= 0) {
+          this.state = 'IDLE';
+          this.think = this.reactT;
+        }
+        break;
+
+      case 'HIT':
+        if (this.timer <= 0) {
+          this.state = this.hp > 0 ? 'IDLE' : 'DEATH';
+          if (this.state === 'IDLE') { this.think = this.reactT + 10; this.setPose(P.idle, 0.10); }
+          else { this.deathAt = Date.now(); this.setPose(P.death, 0.07); }
+        }
+        break;
+
+      case 'STAGGER':
+        if (this.timer <= 0) {
+          this.state = this.hp > 0 ? 'IDLE' : 'DEATH';
+          if (this.state === 'IDLE') { this.think = this.reactT + 14; this.setPose(P.idle, 0.07); }
+          else { this.deathAt = Date.now(); this.setPose(P.death, 0.06); }
+        }
+        break;
+    }
+  }
+
+  startAtk(type) {
+    this.atkType = type;
+    this.didHit  = false;
+    this.state   = 'ATK_WIND';
+    this.timer   = type === 'LIGHT' ? 14 : 24;
+    this.setPose(type === 'LIGHT' ? P.atk_wind : P.atk_h_wind,
+                 type === 'LIGHT' ? 0.20 : 0.13);
+  }
+
+  onHit(dmg, heavy, fromDir) {
+    if (this.hitCD > 0)         return false;
+    if (this.state === 'DEATH') return false;
+
+    this.hp   -= dmg;
+    this.hitCD = 16;
+    spawnHit(this.x, this.hipY - 22, heavy);
+
+    if (heavy || dmg >= 35) {
+      this.state = 'STAGGER'; this.timer = 38; this.setPose(P.stagger, 0.26);
+    } else {
+      this.state = 'HIT';     this.timer = 20; this.setPose(P.hit, 0.36);
+    }
+    if (this.hp <= 0) this.hp = 0;
+    return true;
+  }
+
+  draw() {
+    // Fade out dead enemies
+    if (this.state === 'DEATH' && this.deathAt) {
+      const age = (Date.now() - this.deathAt) / 2800;
+      ctx.globalAlpha = Math.max(0, 1 - age);
+    }
+    super.draw();
+    ctx.globalAlpha = 1;
+
+    // Telegraph orb above attacking enemy
+    if (this.state === 'ATK_WIND') {
+      const progress = 1 - this.timer / (this.atkType === 'LIGHT' ? 14 : 24);
+      const heavy    = this.atkType === 'HEAVY';
+      const r        = 5 + progress * 7;
+      const sx       = this.screenX();
+      const sy       = this.screenY() - 88;
+      ctx.save();
+      ctx.globalAlpha = 0.55 + progress * 0.35;
+      ctx.fillStyle   = heavy ? '#ff3300' : '#ffaa00';
+      ctx.shadowColor = heavy ? '#ff3300' : '#ffcc00';
+      ctx.shadowBlur  = 12;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+// ── Background ────────────────────────────────────────────────
+const BG = {
+  stars: Array.from({length:60}, () => ({
+    x: rand(0, 3000), y: rand(0, GROUND*0.6),
+    r: rand(0.5, 1.8), twinkle: rand(0, Math.PI*2)
+  })),
+
+  draw(time) {
+    // Sky
+    const sky = ctx.createLinearGradient(0,0,0,GROUND);
+    sky.addColorStop(0,'#090918');
+    sky.addColorStop(1,'#1a2a44');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0,0,W,GROUND);
+
+    // Stars
+    this.stars.forEach(s => {
+      const a = 0.4 + 0.4 * Math.sin(s.twinkle + time * 0.001);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = '#ccd';
+      ctx.beginPath(); ctx.arc(s.x - cam.x*0.04 % W, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // Distant mountains (parallax 0.08x)
+    const mo = cam.x * 0.08;
+    ctx.fillStyle = '#1a2238';
+    for (let i = -2; i < 14; i++) {
+      const mx = (i * 180 - mo % 180);
+      const mh = 55 + ((Math.abs(i*7919 + 1337) % 40));
+      ctx.beginPath();
+      ctx.moveTo(mx,         GROUND);
+      ctx.lineTo(mx + 90,    GROUND - mh);
+      ctx.lineTo(mx + 180,   GROUND);
+      ctx.fill();
+    }
+
+    // Mid trees (parallax 0.35x)
+    const to = cam.x * 0.35;
+    ctx.fillStyle = '#142518';
+    for (let i = -2; i < 18; i++) {
+      const tx = (i * 90 - to % 90);
+      const th = 32 + ((Math.abs(i*3571 + 997) % 22));
+      const tw = 16 + ((Math.abs(i*2311) % 10));
+      ctx.fillRect(tx + 38, GROUND - th, 7, th); // trunk
+      ctx.beginPath(); ctx.arc(tx + 41, GROUND - th, tw, 0, Math.PI); ctx.fill();
+    }
+
+    // Ground
+    ctx.fillStyle = '#1e2e14';
+    ctx.fillRect(0, GROUND, W, H - GROUND);
+
+    // Ground edge
+    ctx.strokeStyle = '#3a5020'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
+
+    // Ground detail lines
+    ctx.strokeStyle = '#2a3e1a'; ctx.lineWidth = 1;
+    const gStep = 70;
+    const gOff  = cam.x * 0.92 % gStep;
+    for (let i = -1; i < W/gStep + 2; i++) {
+      const gx = i * gStep - gOff;
+      const glen = 18 + ((Math.abs(i * 1571) % 20));
+      ctx.beginPath(); ctx.moveTo(gx, GROUND+4); ctx.lineTo(gx+glen, GROUND+4); ctx.stroke();
+    }
+  }
+};
+
+// ── HUD ───────────────────────────────────────────────────────
+function drawHUD(player, wave, totalT) {
+  // Big player HP bar
+  const bw = 210, bh = 14, bx = 18, by = 18;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(bx-2, by-2, bw+4, bh+4);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(bx, by, bw, bh);
+  const pct = Math.max(0, player.hp / player.maxHp);
+  const hc  = pct > 0.5 ? '#44cc55' : pct > 0.25 ? '#ffaa22' : '#ee3322';
+  ctx.fillStyle = hc;
+  ctx.fillRect(bx, by, bw * pct, bh);
+  ctx.strokeStyle = '#334'; ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  ctx.fillStyle = '#ccc';
+  ctx.font = '11px Courier New';
+  ctx.fillText(`HP  ${Math.max(0, player.hp)} / ${player.maxHp}`, bx+4, by+11);
+
+  // Score
+  ctx.fillStyle = '#d8e8ff';
+  ctx.font = 'bold 15px Courier New';
+  ctx.fillText(`SCORE  ${player.score}`, 18, 52);
+
+  // Wave
+  ctx.fillStyle = '#a0b0c0';
+  ctx.font = '12px Courier New';
+  ctx.fillText(`WAVE ${wave}`, 18, 70);
+
+  // Timer (top right)
+  const s  = Math.floor(totalT / 60);
+  const mm = String(Math.floor(s/60)).padStart(2,'0');
+  const ss = String(s%60).padStart(2,'0');
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#778';
+  ctx.font = '12px Courier New';
+  ctx.fillText(`${mm}:${ss}`, W-18, 32);
+  ctx.textAlign = 'left';
+
+  // Combo
+  if (player.comboN >= 2 && player.comboT > 0) {
+    const a = Math.min(1, player.comboT / 40);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#ffdd44';
+    ctx.font = `bold ${16 + player.comboN * 2}px Courier New`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${player.comboN}× COMBO`, W/2, 56);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  // Block indicator
+  if (player.blocking) {
+    ctx.fillStyle = '#44aaff';
+    ctx.font = '11px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('BLOCKING', W/2, H - 28);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawGameOver(player, wave, totalT) {
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0,0,W,H);
+
+  const cx = W/2;
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#cc3322';
+  ctx.font = 'bold 46px Courier New';
+  ctx.fillText('GAME OVER', cx, H/2 - 46);
+
+  ctx.fillStyle = '#ccd';
+  ctx.font = '20px Courier New';
+  ctx.fillText(`SCORE  ${player.score}`, cx, H/2 + 4);
+
+  const s  = Math.floor(totalT / 60);
+  const mm = String(Math.floor(s/60)).padStart(2,'0');
+  const ss = String(s%60).padStart(2,'0');
+  ctx.fillText(`SURVIVED  ${mm}:${ss}  ·  WAVE ${wave}`, cx, H/2 + 34);
+
+  ctx.font = '14px Courier New';
+  ctx.fillStyle = '#556';
+  ctx.fillText('PRESS  ENTER  TO  RESTART', cx, H/2 + 74);
+
+  ctx.textAlign = 'left';
+}
+
+// ── Game state ────────────────────────────────────────────────
+let player, enemies, wave, spawnCD, spawnInterval, totalT, gameState, deathPauseT;
+
+function init() {
+  player        = new Player();
+  enemies       = [];
+  wave          = 1;
+  spawnCD       = 90;   // frames until first spawn
+  spawnInterval = 200;  // frames between spawns
+  totalT        = 0;
+  gameState     = 'PLAY';
+  deathPauseT   = 0;
+  cam.x         = 0;
+  cam.tx        = 0;
+  cam.shake     = 0;
+  parts.length  = 0;
+  trail.length  = 0;
+}
+
+function spawnEnemy() {
+  // Always spawn ahead in player's direction
+  const spawnX = player.x + 420 + rand(0, 200);
+  enemies.push(new Enemy(spawnX, wave));
+}
+
+function updateSpawn() {
+  // Wave escalation every ~35 seconds
+  if (totalT > 0 && totalT % 2100 === 0) {
+    wave++;
+    spawnInterval = Math.max(90, spawnInterval - 18);
+  }
+
+  spawnCD--;
+  if (spawnCD <= 0) {
+    const maxAlive = 1 + Math.floor(wave * 0.6);
+    const alive    = enemies.filter(e => e.state !== 'DEATH').length;
+    if (alive < maxAlive) spawnEnemy();
+    spawnCD = spawnInterval;
+  }
+
+  // Reap dead enemies after 4s
+  enemies = enemies.filter(e => {
+    if (e.state !== 'DEATH') return true;
+    if (!e.deathAt) e.deathAt = Date.now();
+    return Date.now() - e.deathAt < 4000;
+  });
+}
+
+// ── Main loop ─────────────────────────────────────────────────
+let lastTime = 0;
+
+function loop(ts) {
+  ctx.clearRect(0,0,W,H);
+  BG.draw(ts);
+
+  if (gameState === 'PLAY') {
+    totalT++;
+    player.update(enemies);
+    enemies.forEach(e => e.update(player));
+    updateSpawn();
+    updateParts();
+    updateTrail();
+
+    if (player.state === 'DEATH') {
+      deathPauseT++;
+      if (deathPauseT > 110) gameState = 'OVER';
+    }
+  }
+
+  // Render
+  // Draw back-enemies first (naively sort by x distance — closer = drawn later)
+  [...enemies].sort((a,b) => Math.abs(a.x-player.x) - Math.abs(b.x-player.x))
+              .reverse()
+              .forEach(e => e.draw());
+
+  drawTrail();
+  player.draw();
+  drawParts();
+
+  if (gameState === 'PLAY') {
+    drawHUD(player, wave, totalT);
+  } else {
+    drawHUD(player, wave, totalT);
+    drawGameOver(player, wave, totalT);
+  }
+
+  // Handle restart
+  if (gameState === 'OVER' && KJ['Enter']) init();
+
+  // Clear just-pressed register
+  for (const k in KJ) delete KJ[k];
+
+  requestAnimationFrame(loop);
+}
+
+init();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
