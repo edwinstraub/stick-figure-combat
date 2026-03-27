@@ -14,8 +14,8 @@ position = Vector2(576, 400)
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Floor" unique_id=422663708]
 shape = SubResource("RectangleShape2D_yqjtg")
 
-[node name="Player" parent="Floor" unique_id=1776747874 instance=ExtResource("1_uwrxv")]
-position = Vector2(576, 0)
+[node name="Player" parent="." unique_id=1776747874 instance=ExtResource("1_uwrxv")]
+position = Vector2(576, 400)
 
 [node name="ColorRect" type="ColorRect" parent="Floor" unique_id=1954370818]
 offset_left = -600.0

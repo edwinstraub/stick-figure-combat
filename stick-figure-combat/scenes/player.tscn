@@ -1,17 +1,89 @@
 [gd_scene format=3 uid="uid://dv110cjtdogkk"]
 
-[ext_resource type="Script" uid="uid://8uxoywugfidn" path="res://scripts/stick_figure.gd" id="1_3vyb7"]
 [ext_resource type="Script" uid="uid://dwj6yueso2iwk" path="res://scripts/player.gd" id="1_g2els"]
+[ext_resource type="Script" uid="uid://cpel8yl4q4uwk" path="res://scripts/stick_figure_renderer.gd" id="2_renderer"]
 
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_u8vuu"]
 height = 60.0
 
-[node name="Player" type="CharacterBody2D" unique_id=1776747874]
+[node name="Player" type="CharacterBody2D" unique_id=1772179504]
 script = ExtResource("1_g2els")
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=2121631751]
-position = Vector2(0, -25)
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=787751169]
+position = Vector2(0, -10)
 shape = SubResource("CapsuleShape2D_u8vuu")
 
-[node name="StickFigure" type="Node2D" parent="." unique_id=254662588]
-script = ExtResource("1_3vyb7")
+[node name="StickFigure" type="Node2D" parent="." unique_id=1742746517]
+
+[node name="Skeleton2D" type="Skeleton2D" parent="StickFigure" unique_id=595090016]
+
+[node name="Hip" type="Bone2D" parent="StickFigure/Skeleton2D" unique_id=1003765979]
+position = Vector2(0, 0)
+rest = Transform2D(1, 0, 0, 1, 0, 0)
+
+[node name="Spine" type="Bone2D" parent="StickFigure/Skeleton2D/Hip" unique_id=928909174]
+position = Vector2(0, -35)
+rest = Transform2D(1, 0, 0, 1, 0, -35)
+
+[node name="Neck" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine" unique_id=1020366141]
+position = Vector2(0, -3)
+rest = Transform2D(1, 0, 0, 1, 0, -3)
+
+[node name="Head" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck" unique_id=1952128597]
+position = Vector2(0, -12)
+rest = Transform2D(1, 0, 0, 1, 0, -12)
+
+[node name="LeftUpperArm" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck" unique_id=1193047471]
+position = Vector2(0, 0)
+rest = Transform2D(1, 0, 0, 1, 0, 0)
+
+[node name="LeftForearm" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck/LeftUpperArm" unique_id=870334267]
+position = Vector2(-20, 8)
+rest = Transform2D(1, 0, 0, 1, -20, 8)
+
+[node name="LeftHand" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck/LeftUpperArm/LeftForearm" unique_id=887288422]
+position = Vector2(-19, 7)
+rest = Transform2D(1, 0, 0, 1, -19, 7)
+
+[node name="RightUpperArm" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck" unique_id=1523668326]
+position = Vector2(0, 0)
+rest = Transform2D(1, 0, 0, 1, 0, 0)
+
+[node name="RightForearm" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck/RightUpperArm" unique_id=2110004268]
+position = Vector2(20, 8)
+rest = Transform2D(1, 0, 0, 1, 20, 8)
+
+[node name="RightHand" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/Spine/Neck/RightUpperArm/RightForearm" unique_id=1940237897]
+position = Vector2(19, 7)
+rest = Transform2D(1, 0, 0, 1, 19, 7)
+
+[node name="LeftThigh" type="Bone2D" parent="StickFigure/Skeleton2D/Hip" unique_id=512467816]
+position = Vector2(0, 0)
+rest = Transform2D(1, 0, 0, 1, 0, 0)
+
+[node name="LeftShin" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/LeftThigh" unique_id=1612938328]
+position = Vector2(-8, 30)
+rest = Transform2D(1, 0, 0, 1, -8, 30)
+
+[node name="LeftFoot" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/LeftThigh/LeftShin" unique_id=1297508041]
+position = Vector2(-4, 30)
+rest = Transform2D(1, 0, 0, 1, -4, 30)
+
+[node name="RightThigh" type="Bone2D" parent="StickFigure/Skeleton2D/Hip" unique_id=1988444303]
+position = Vector2(0, 0)
+rest = Transform2D(1, 0, 0, 1, 0, 0)
+
+[node name="RightShin" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/RightThigh" unique_id=151186117]
+position = Vector2(8, 30)
+rest = Transform2D(1, 0, 0, 1, 8, 30)
+
+[node name="RightFoot" type="Bone2D" parent="StickFigure/Skeleton2D/Hip/RightThigh/RightShin" unique_id=2007988796]
+position = Vector2(4, 30)
+rest = Transform2D(1, 0, 0, 1, 4, 30)
+
+[node name="StickFigureRenderer" type="Node2D" parent="StickFigure" unique_id=1685418961]
+script = ExtResource("2_renderer")
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="StickFigure" unique_id=682247735]
+
+[node name="AnimationTree" type="AnimationTree" parent="StickFigure" unique_id=1456685244]
